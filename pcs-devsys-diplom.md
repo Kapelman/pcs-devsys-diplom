@@ -320,7 +320,7 @@ Development mode should NOT be used in production installations!
 - Пропишем переменные, необходимые для работы Vault
 ```
 vagrant@vagrant:~$ export VAULT_ADDR='http://127.0.0.1:8200'
-vagrant@vagrant:~$  export VAULT_TOKEN='root'
+vagrant@vagrant:~$ export VAULT_TOKEN='root'
 vagrant@vagrant:~$ vault status
 Key             Value
 ---             -----
@@ -413,7 +413,7 @@ Success! Data written to: pki_int/intermediate/set-signed
 
 - Создадим роль 
 ```
-vagrant@vagrant:~$ vault write pki_int/roles/example-dot-com  allowed_domains="example.com" allow_subdomains=true  max_ttl="720h"
+    vagrant@vagrant:~$ vault write pki_int/roles/example-dot-com  allowed_domains="example.com" allow_subdomains=true  max_ttl="720h"
 Success! Data written to: pki_int/roles/example-dot-com
 ```
 - сгенерируем сертификат для test.example.com на 740 часов.
@@ -838,16 +838,295 @@ ff02::2 ip6-allrouters
 генерируем новый сертификат так, чтобы не переписывать конфиг nginx;
 перезапускаем nginx для применения нового сертификата.
 
+Скрипт указан ниже. Генерируется сертификат для доменного имени test.example.com, происходит перезагрузка сервера NGINX.
+```buildoutcfg
+import os
+import socket
+import datetime
+import time
+import json
+import argparse
+import requests
+import subprocess
 
+from requests.exceptions import HTTPError
+
+# get site name
+
+#parser = argparse.ArgumentParser(description='Input site name')
+#parser.add_argument('site', help='input site name. It should ends with example.com')
+
+#args = parser.parse_args()
+#print(args)
+#site = args.site
+
+site = 'test.example.com'
+
+# perform http post request
+
+if 'VAULT_ADDR' in os.environ:
+    VAULT_ADDR = os.environ.get('VAULT_ADDR')
+else:
+    VAULT_ADDR = 'http://127.0.0.1:8200'
+
+if 'VAULT_TOKEN' in os.environ:
+    VAULT_TOKEN = os.environ.get('VAULT_TOKEN')
+else:
+    VAULT_TOKEN = 'root'
+
+
+url = VAULT_ADDR + '/v1/pki_int/issue/example-dot-com'
+headers = {'X-Vault-Token': VAULT_TOKEN}
+data = {'common_name': site, 'ttl': '1h', 'format': 'pem_bundle'}
+
+#url2 = 'http://127.0.0.1:8200/pki_int/roles/example-dot-com'
+
+# request
+
+try:
+    response = requests.post(url, data=json.dumps(data), headers=headers)
+#    response = requests.get(url2, headers=headers)
+# если ответ успешен, исключения задействованы не будут
+    response.raise_for_status()
+except HTTPError as http_err:
+    print(f'HTTP error occurred: {http_err}')
+except Exception as err:
+    print(f'Other error occurred: {err}')
+else:
+    print('Success!')
+
+print(response.status_code)
+
+cert_str=response.text
+
+cert_json = json.loads(cert_str)
+
+crt_mass = cert_json ['data']
+cert_str = crt_mass['certificate']
+
+print(cert_str)
+file_crt = open('/etc/nginx/cert.crt', 'w')
+file_crt.write(cert_str)
+file_crt.close()
+
+#sudo systemctl reload nginx
+start_nginx = subprocess.run(['systemctl', 'reload','nginx'])
+
+if start_nginx.returncode == 0:
+    print(start_nginx.returncode)
+    print('Обновление сертификата завершено успешно')
+else:
+    print('Обновление сертификата прошло некорректно, nginx не запущен')
+```
+Скрипт имеет следующий вывод на экран:
+```
+vagrant@vagrant:~/py-scripts$ sudo python3.9 my_script.py
+Success!
+200
+-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEA9a5Dwj8i1ukLd/VHLqTvWxTmFR4ZlElPFKrckYuluEGDpSK3
+mxvfUqdl9XE7qKC6xjVMBvycbeGNB4/p+zJU4Gz6Jt16CNGx/P6Uw0Bl7/CQ5AZE
+xTgMVGhYPwwx52bZ2Oi5d0Oo7BK6qnCfa5MP5NcqZyT5g3prr91l6/o9wwFLzJfU
+72wOd3iDH7p2Ws+/jV/qz4KM6RVPn43xjsoyj+gzkyU0eNANp+7opDro1/NVSGSj
+ch89mHa/C79vFD9Ks5a+UsqoD/kbTePrFbvvWexuMA9fcxv5PzIlf7uMnJeo/lkB
+jT/Wy73hIK9qWBl5BfS5qjhexQOuYtCYeKGh7wIDAQABAoIBAFuLR6xFolG6HI/i
+UVfMFXQ24VTVFmrutgzZbb697k4t+0O5H/kn9ZryzUcbnkNDQNVCXsXrss4u0UIU
+GfeD1aSadsuskyBeIphGtF/cyx8Q4KxWuaFTNSTujJNRk/bJmDr+3LzX9UWh5PRF
+auHGtpFqq14rpN2c7Ctnr+ayI/lY813hZbscjPaBVtYKWkNSAArATO6AQi/PsBso
+VVpaQbb2Px2U40bP4AiZdio7mIo+1Jmzcd8jnQAG1K0WRo2vPXQFKqJQnlwx1siY
+pEaczZQnP7+P+iPY5QYYogO9GsdwLrVkwwZRJ+NMpcQXfiMmfMo2yBQ5Tjl3gq15
+oOAjfiECgYEA9sk2JSSGb7U9gdi8++j9nEECsy3xoa5vO6efUAgvKzElblRjnNj8
+CLmNs/pC0R2WUF2iWIf/Kf64RI83liAoleO2dYYt4aaykbMz4PGUlywsQHYuzs8S
+dsKV8L0RI25embGEaMfnH+Zjz49xBQJwBvAzkj6b1hjjoIlqrryP6uUCgYEA/tp9
+Mt6KHzV60A39r03sb7vm4tsAaTyO2RtcXSWpM436RI4X1tH9ICP/Aw+DEixtYpbk
+jmY7Hy2EZORTTzRaWl7hrqjZ/WspEcbOmXm6MPYjmjgDml7731YurSVNCr36xFl/
+7hJqzmpbcPTyY+GV0lr9eKeaU+RMCkZLYwcgCEMCgYEAqPdU2hNq9DrsFOYXZoa8
+dWpRdeqkAOYUhIyc2EfyO6lXjnW7Ch3KWhLpQWu8qb6PNxEU4XajrtYWxeIk1eXI
+w+938nlfGptusbE3ePEOon59Admo7LH8W1GZJY3dmRutK5/OH4uW5FFyzx7P6/Ui
+TK3TMXMqcWjzGOxdHaw/AT0CgYAUJ7VlE4J662DWGXUpqxD62TJuWIGU0Qw/EVHh
+r/vMrvrO9yndfGf3ZcFiPZTRGCBifqp+tIkScygYTpJkHjDTGtPgW0w6JYJu/HkU
+XDMkciLorGtkhwSGaitw2BVatyGg668ZZe16e6DVsxmEWq/dngKTyzWCUvjMizil
+EUgwPwKBgQDe90AN8XTeC77zQa/3w5sOaqKzyfI6qgFexIr9VVgeEwxGu3q3LM8A
+NE3F1QVkN5hvZPuUw04QNoAJONG+p/rpBkvHjI2zRZnLxWJtJ0+oIEy9TuF9bQF4
+05sltZt/33XDMwFD+IfyWED3B36zb5f2lemf5X/LKImakt7Nk3GUcw==
+-----END RSA PRIVATE KEY-----
+-----BEGIN CERTIFICATE-----
+MIIDZjCCAk6gAwIBAgIUO0nYAhrYVmV28kR2ZqW8Z2s/yVQwDQYJKoZIhvcNAQEL
+BQAwLTErMCkGA1UEAxMiZXhhbXBsZS5jb20gSW50ZXJtZWRpYXRlIEF1dGhvcml0
+eTAeFw0yMjA1MTQyMTA3MjJaFw0yMjA1MTQyMjA3NTJaMBsxGTAXBgNVBAMTEHRl
+
+c3QuZXhhbXBsZS5jb20wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQD1
+rkPCPyLW6Qt39UcupO9bFOYVHhmUSU8UqtyRi6W4QYOlIrebG99Sp2X1cTuooLrG
+NUwG/Jxt4Y0Hj+n7MlTgbPom3XoI0bH8/pTDQGXv8JDkBkTFOAxUaFg/DDHnZtnY
+6Ll3Q6jsErqqcJ9rkw/k1ypnJPmDemuv3WXr+j3DAUvMl9TvbA53eIMfunZaz7+N
+X+rPgozpFU+fjfGOyjKP6DOTJTR40A2n7uikOujX81VIZKNyHz2Ydr8Lv28UP0qz
+lr5SyqgP+RtN4+sVu+9Z7G4wD19zG/k/MiV/u4ycl6j+WQGNP9bLveEgr2pYGXkF
+9LmqOF7FA65i0Jh4oaHvAgMBAAGjgY8wgYwwDgYDVR0PAQH/BAQDAgOoMB0GA1Ud
+JQQWMBQGCCsGAQUFBwMBBggrBgEFBQcDAjAdBgNVHQ4EFgQU71bBwPD6R7F1K2Qv
+mULtlq/O+ZgwHwYDVR0jBBgwFoAUXWk0XByfFVg5ySIrZ4p1ZdtdqfMwGwYDVR0R
+BBQwEoIQdGVzdC5leGFtcGxlLmNvbTANBgkqhkiG9w0BAQsFAAOCAQEAfnI3j4UH
+HPNONYPdnizfr/0h3qjixgd3bARTWRI7jR6XujQnCAJcNsr/vHhdlx8RPDNWJJlW
+PxF4KHDu1kP8aFOapenTXcg9I7A57r/Kl7oz0r062ozJcWG8ytHh+7/+fLDeuscw
+IhPT+PPYcdlvR+CmHRLLq3N2d+XF0AzouSwdbWIHWuzLvH82rIsYuOYd1Di0I6Ht
+mT8JMhF10W7r4ZNnRzDuwXhhNw9peEgD78jAeCR7sFgHIkUC13cFqal88ynOOufb
+VlB73Q+is6ZFSAcB1C9ReIT+fvk6iHjeLTglD0mqJ6yo311SiVa/ROihudHfrGKk
+JF4hRfziuWQyZg==
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIIDpjCCAo6gAwIBAgIUTRsKAHigjwfh9xxnzxSUmC43MHIwDQYJKoZIhvcNAQEL
+BQAwFjEUMBIGA1UEAxMLZXhhbXBsZS5jb20wHhcNMjIwNTE0MTk1NzA0WhcNMjIw
+NjE0MTk1NzM0WjAtMSswKQYDVQQDEyJleGFtcGxlLmNvbSBJbnRlcm1lZGlhdGUg
+QXV0aG9yaXR5MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAx9xEmkYA
+nomIIFKAEmaOiBb4DcxwpixD+9T2ECvjzEHNPlTet3mca6dHtKJqLUxqTlsFr1YU
+Qzharfv1dlcJmZue0Hd2250If+dl5nZoAOyDvs3JJbIidFDpUOZTgImqAgkxCeFR
+9+NgqZwU6KiVXD08rFYkbRNK0kFu7l+un38fd4UsTX3/Vk1uyaou4y/Y9XDjM/YS
+Xo0+xJtfV2JaS8pSccLyZE0yb0/iVTpD9GdHhur0vouz7fAw2tb9s+fWiSBehQ8y
+UJoz+a15qDP8eowdrgy2QrKge2CNM+vbZqvHKNqM/elB+A67AF4a5YCLoOZTElCu
+sX+EeMMdvUwWwwIDAQABo4HUMIHRMA4GA1UdDwEB/wQEAwIBBjAPBgNVHRMBAf8E
+BTADAQH/MB0GA1UdDgQWBBRdaTRcHJ8VWDnJIitninVl212p8zAfBgNVHSMEGDAW
+gBRn6TqWHjzSYCOrdnFq1DajUwP0ozA7BggrBgEFBQcBAQQvMC0wKwYIKwYBBQUH
+MAKGH2h0dHA6Ly8xMjcuMC4wLjE6ODIwMC92MS9wa2kvY2EwMQYDVR0fBCowKDAm
+oCSgIoYgaHR0cDovLzEyNy4wLjAuMTo4MjAwL3YxL3BraS9jcmwwDQYJKoZIhvcN
+AQELBQADggEBACp44DEZZSyMkTTKYXBzjlkVb4veqhi+mfsxwQm3UrrIlsDZjgWG
+bxJPiY6SrKTeyF6hRjoQ00Q0ufHSH40APEzaOE6ix+SDIg9Jyev/hwURhbCSIFwf
+sn2ozYXcE2y2xOm78NRYQjwn5QYNYTeZayYX1hIsbdrOroWdi/ZSVtk4v6OZKH4v
+0tGo8TaRRFF+Tno5/BjAxmZPFq0IH0gqC8uLk9h7Copn2AwC4xEUcWvlrC7gA3y7
+T/tiQ6Lbu2oC3vi62gc8N8BEKSPSvPLfl9xCQHCz7g9J+djVO/i88NpZPLy+VUC2
+fK7fc4k/VTafIhflCvPD4RdluYHQJa/vnXU=
+-----END CERTIFICATE-----
+0
+Обновление сертификата завершено успешно
+```
 10. Поместите скрипт в crontab, чтобы сертификат обновлялся какого-то числа каждого месяца в удобное для вас время.
+- планируем задание (по Universal time: Sat 2022-05-14 22:15:00 UTC)
 
+```
+vagrant@vagrant:~$ sudo crontab -u root -e
+15 22 14 * * python3.9 /home/vagrant/py-scripts/my_script.py >> /home/vagrant/script.log
+crontab: installing new crontab
+```
+- ниже видим лог отработки задания
+```
+vagrant@vagrant:/etc/cron.monthly$ cat /var/log/syslog | grep CRON
+May 14 10:04:20 vagrant cron[686]: (CRON) INFO (pidfile fd = 3)
+May 14 10:04:20 vagrant cron[686]: (CRON) INFO (Running @reboot jobs)
+May 14 10:17:01 vagrant CRON[4111]: (root) CMD (   cd / && run-parts --report /etc/cron.hourly)
+May 14 10:55:31 vagrant cron[693]: (CRON) INFO (pidfile fd = 3)
+May 14 10:55:31 vagrant cron[693]: (CRON) INFO (Running @reboot jobs)
+May 14 11:17:01 vagrant CRON[5952]: (root) CMD (   cd / && run-parts --report /etc/cron.hourly)
+May 14 12:17:01 vagrant CRON[14364]: (root) CMD (   cd / && run-parts --report /etc/cron.hourly)
+May 14 13:17:01 vagrant CRON[25267]: (root) CMD (   cd / && run-parts --report /etc/cron.hourly)
+May 14 19:17:01 vagrant CRON[34912]: (root) CMD (   cd / && run-parts --report /etc/cron.hourly)
+May 14 20:17:01 vagrant CRON[50992]: (root) CMD (   cd / && run-parts --report /etc/cron.hourly)
+May 14 21:17:01 vagrant CRON[61934]: (root) CMD (   cd / && run-parts --report /etc/cron.hourly)
+May 14 22:15:01 vagrant CRON[70046]: (root) CMD (python3.9 /home/vagrant/py-scripts/my_script.py >> /home/vagrant/script.log)
+```
+- сгенерированный сертификат (время изменения по localtime)
+```
+vagrant@vagrant:/etc/nginx$ ls -al
+total 80
+drwxr-xr-x   8 root root 4096 May 14 23:34 .
+drwxr-xr-x 100 root root 4096 May 15 01:06 ..
+-rw-r--r--   1 root root 4245 May 15 01:15 cert.crt
+drwxr-xr-x   2 root root 4096 Jul  6  2020 conf.d
+-rw-r--r--   1 root root 1125 Jul  6  2020 fastcgi.conf
+-rw-r--r--   1 root root 1055 Jul  6  2020 fastcgi_params
+-rw-r--r--   1 root root 2837 Jul  6  2020 koi-utf
+-rw-r--r--   1 root root 2223 Jul  6  2020 koi-win
+-rw-r--r--   1 root root 3957 Jul  6  2020 mime.types
+drwxr-xr-x   2 root root 4096 Jul  6  2020 modules-available
+drwxr-xr-x   2 root root 4096 May 12 13:59 modules-enabled
+-rw-r--r--   1 root root 1447 Jul  6  2020 nginx.conf
+-rw-r--r--   1 root root  180 Jul  6  2020 proxy_params
+-rw-r--r--   1 root root  636 Jul  6  2020 scgi_params
+drwxr-xr-x   2 root root 4096 May 14 22:48 sites-available
+drwxr-xr-x   2 root root 4096 May 12 22:53 sites-enabled
+drwxr-xr-x   2 root root 4096 May 12 13:59 snippets
+-rw-r--r--   1 root root  664 Jul  6  2020 uwsgi_params
+-rw-r--r--   1 root root 3071 Jul  6  2020 win-utf
+```
+- лог работы скрипта (время создания по localtime)
+```
+vagrant@vagrant:~$ ls -al
+total 168520
+-rw-r--r-- 1 root    root         4339 May 15 01:15 script.log
 
+```
 
-
-
-
-
-
-
-
-
+```
+vagrant@vagrant:~$ cat script.log
+Success!
+200
+-----BEGIN RSA PRIVATE KEY-----
+MIIEpgIBAAKCAQEAy+q4WkOvSx4hCWpXTSKGac2X8JNUXh6Z7poWJIoquD8DI/km
+FWVqZSS3rtn7mD2JsC8qXm8A5zg9jkExvN9DoRkRVLR8EMCAEz8HVA3VxRtkKQPN
+YKIjqVp19EsEeER74EACzzib+O4eCEmKBwFosHE6NVjh4Y/zlRK5K1h1y0fMSi7a
+cg/DOQwFpnnExpp3DWrLoxmmCxAA8BJ5S4iCP5yq1T1FqPL9ptMXwJNsVujbontT
+3rcodZVH939b5x9lt1N6JQ/InoCfZOgsSszi5RZqo4ObVG13mMZl0fiZzUUsJMdh
+4Pp/lkclDFZPV7um0BqxOi8fwN2iYNps99WkmQIDAQABAoIBAQC4UuthbF0/oXRr
+dlyDtPmbGeSF6icRDMhIDbCGRv5mnU7RbZ0nKg0KcC45N4FdFAMp5vh9dAl0+Dls
+JTI4b/hJ3sbzslGTMu6Sdx7As+DP0vquuGklOGrT4plMwaLAs+blxfbEKX+TfGpZ
+Q2ApBPUEyNS89CL6KY0c61fF/qg7noXMciMJPCrExnbGK9RCqw+040MuHPXQKCWg
+l0UdLE+vJrusruCWfRs02+I0OG3MqyXTbHj7hX2b3knGpaiIzhU3kIfmkBUNlj5L
+urzC73RpHvLKeuFzK/5EkTaNokhoOvbFPBtBIY2PvNStvguQAARAmlZFoYQuazBE
+M3l0LaUhAoGBAOGxdDj6irBTPt4HbQVFJkIJ5m54Bjm0m9a/zTngbFKhvCvxUklv
+tBcW1H4YctzlbLkabid4O4+aYeUmHdB+8fkouCGdssUF7eebiIsB53Tx3Y4YJqTS
+9GjwD+fg0BdQ/slNa6DzGxnF7sOKcue8Lr0xNe+VXKyjYe7fqQBZIKAvAoGBAOdM
+rC6kJ5xHmRwWyxY3gk1IcHNbZ+X4xkfzgfb48yEDPyO2EL+zZVYmYiKGGQPbcQ+y
+QMTtu2kkXwZsFvpaSSiifrkf7SA7JbuL3eqnrBz7VPN1fVbUYsCp9ay4zbMU7Uzj
+PQ1gzR18ORwCERFThekrJ7nL2pnEHomSiBrBu023AoGBALQo7ojJXspwOUANl3Zc
+g7S1qG9Iele4F6pug0mPH4k6uDYvtisO8yh3PfrGU3KH5alBMuto68qvRzQfoC8e
+FtR5L7sN4nWqTQXUP0QPqg7NP7m9B6QNDbNy5o+IAzSJoEla9u6NAXYqbXVEYIMh
+0gGOdeqhRVA+P9/qREMV4phbAoGBAIY56HHosVPv+NpkH9b0v5k5wIgxM0ox5F88
+4N8B+ZXe3HVM4stcwCIOhESkrT+fySzitNOTYn7RrJN9hpgibPI32nJ0JJffuzXr
+JQ1X4HmxIMtoEySge+5ysy9Yz4ZtToigFn38/wttW3b1fBIh9kQp1xPrSSCSv2X2
+syVT5+5hAoGBAKKoHufQzYLLi27WioODmfwVrSkOAnze36WP+MuscUJyUw6pjBNa
++S3Zeh8EVN3Wxjvxx1pTMP2byISYTsAKHELYPjdOkcKSjnSJjPImllK4w7timkQS
+CCUrlvinzPlkejz+ZbWFFvluSZIa42gjSgku2rDZpHn4mWXlgazLKSv+
+-----END RSA PRIVATE KEY-----
+-----BEGIN CERTIFICATE-----
+MIIDZjCCAk6gAwIBAgIUbiNlVJ6+OJv+d5WoyMvDK9tTRPEwDQYJKoZIhvcNAQEL
+BQAwLTErMCkGA1UEAxMiZXhhbXBsZS5jb20gSW50ZXJtZWRpYXRlIEF1dGhvcml0
+eTAeFw0yMjA1MTQyMjE0MzJaFw0yMjA1MTQyMzE1MDFaMBsxGTAXBgNVBAMTEHRl
+c3QuZXhhbXBsZS5jb20wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDL
+6rhaQ69LHiEJaldNIoZpzZfwk1ReHpnumhYkiiq4PwMj+SYVZWplJLeu2fuYPYmw
+LypebwDnOD2OQTG830OhGRFUtHwQwIATPwdUDdXFG2QpA81goiOpWnX0SwR4RHvg
+QALPOJv47h4ISYoHAWiwcTo1WOHhj/OVErkrWHXLR8xKLtpyD8M5DAWmecTGmncN
+asujGaYLEADwEnlLiII/nKrVPUWo8v2m0xfAk2xW6Nuie1Petyh1lUf3f1vnH2W3
+U3olD8iegJ9k6CxKzOLlFmqjg5tUbXeYxmXR+JnNRSwkx2Hg+n+WRyUMVk9Xu6bQ
+GrE6Lx/A3aJg2mz31aSZAgMBAAGjgY8wgYwwDgYDVR0PAQH/BAQDAgOoMB0GA1Ud
+JQQWMBQGCCsGAQUFBwMBBggrBgEFBQcDAjAdBgNVHQ4EFgQUOuL6lBD3Gn1pwYUU
+Mc+Clcl4F3gwHwYDVR0jBBgwFoAUXWk0XByfFVg5ySIrZ4p1ZdtdqfMwGwYDVR0R
+BBQwEoIQdGVzdC5leGFtcGxlLmNvbTANBgkqhkiG9w0BAQsFAAOCAQEAIN+l904S
+m6rsO2CbOKuMZzTEpO5BgE4NKieOQQ+FA74xV36RQdo9K6eg5nCOmpGyBr7bCoOy
+438a0CLYShnA+Y1KavJMQE/AHc2u0wnVPMTG8iFldwO8jcme93dVev7Bbn0nXjjA
+0GPI3fwCt3t2tE5PKU9eJPf7Ce179D9L8AzXn6evhZUtkaPct36oE7mqpCTL47vy
+tvIxh7F4GIH9xGX25Ubh87/m+iwSyej3o07NJYl37J+6P18Py/wxltdf6n2lcj5m
+Fw2PqzIYh0XnsaG1y34OQsgabbTwO1eQgqr0bzarbpn1grfuKWl+XAdo6kSnms+q
+L+m1KIH2P+XAOg==
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIIDpjCCAo6gAwIBAgIUTRsKAHigjwfh9xxnzxSUmC43MHIwDQYJKoZIhvcNAQEL
+BQAwFjEUMBIGA1UEAxMLZXhhbXBsZS5jb20wHhcNMjIwNTE0MTk1NzA0WhcNMjIw
+NjE0MTk1NzM0WjAtMSswKQYDVQQDEyJleGFtcGxlLmNvbSBJbnRlcm1lZGlhdGUg
+QXV0aG9yaXR5MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAx9xEmkYA
+nomIIFKAEmaOiBb4DcxwpixD+9T2ECvjzEHNPlTet3mca6dHtKJqLUxqTlsFr1YU
+Qzharfv1dlcJmZue0Hd2250If+dl5nZoAOyDvs3JJbIidFDpUOZTgImqAgkxCeFR
+9+NgqZwU6KiVXD08rFYkbRNK0kFu7l+un38fd4UsTX3/Vk1uyaou4y/Y9XDjM/YS
+Xo0+xJtfV2JaS8pSccLyZE0yb0/iVTpD9GdHhur0vouz7fAw2tb9s+fWiSBehQ8y
+UJoz+a15qDP8eowdrgy2QrKge2CNM+vbZqvHKNqM/elB+A67AF4a5YCLoOZTElCu
+sX+EeMMdvUwWwwIDAQABo4HUMIHRMA4GA1UdDwEB/wQEAwIBBjAPBgNVHRMBAf8E
+BTADAQH/MB0GA1UdDgQWBBRdaTRcHJ8VWDnJIitninVl212p8zAfBgNVHSMEGDAW
+gBRn6TqWHjzSYCOrdnFq1DajUwP0ozA7BggrBgEFBQcBAQQvMC0wKwYIKwYBBQUH
+MAKGH2h0dHA6Ly8xMjcuMC4wLjE6ODIwMC92MS9wa2kvY2EwMQYDVR0fBCowKDAm
+oCSgIoYgaHR0cDovLzEyNy4wLjAuMTo4MjAwL3YxL3BraS9jcmwwDQYJKoZIhvcN
+AQELBQADggEBACp44DEZZSyMkTTKYXBzjlkVb4veqhi+mfsxwQm3UrrIlsDZjgWG
+bxJPiY6SrKTeyF6hRjoQ00Q0ufHSH40APEzaOE6ix+SDIg9Jyev/hwURhbCSIFwf
+sn2ozYXcE2y2xOm78NRYQjwn5QYNYTeZayYX1hIsbdrOroWdi/ZSVtk4v6OZKH4v
+0tGo8TaRRFF+Tno5/BjAxmZPFq0IH0gqC8uLk9h7Copn2AwC4xEUcWvlrC7gA3y7
+T/tiQ6Lbu2oC3vi62gc8N8BEKSPSvPLfl9xCQHCz7g9J+djVO/i88NpZPLy+VUC2
+fK7fc4k/VTafIhflCvPD4RdluYHQJa/vnXU=
+-----END CERTIFICATE-----
+0
+Обновление сертификата завершено успешно
+```
